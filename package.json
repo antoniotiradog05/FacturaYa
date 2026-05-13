@@ -1,11 +1,32 @@
 {
   "name": "facturaya",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "FacturaYa Pro Desktop",
+  "main": "main.js",
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "electron:start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.facturaya.app",
+    "productName": "FacturaYa",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "dir",
+      "icon": "public/favicon.ico"
+    },
+    "extraResources": [
+      {
+        "from": "database.sqlite",
+        "to": "database.sqlite",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
   "keywords": [],
   "author": "",
@@ -16,7 +37,16 @@
     "cors": "^2.8.6",
     "dayjs": "^1.11.20",
     "express": "^5.2.1",
-    "open": "^11.0.0",
     "pdfkit": "^0.18.0"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.1"
   }
 }

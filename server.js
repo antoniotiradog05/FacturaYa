@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const open = require('open');
 const db = require('./database');
 const { generateInvoicePdf } = require('./pdf_service');
 
@@ -21,12 +20,15 @@ const asNumber = (value, fallback = 0) => {
 
 const round2 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
 
-const calculateInvoiceTotals = (items, vatRate, irpfRate) => {
-  const subtotal = round2(items.reduce((acc, item) => acc + (item.quantity * item.unit_price), 0));
+const calculateInvoiceTotals = (items, vatRate, irpfRate, discountRate = 0) => {
+  const grossSubtotal = round2(items.reduce((acc, item) => acc + (item.quantity * item.unit_price), 0));
+  const discountAmount = round2(grossSubtotal * (discountRate / 100));
+  const subtotal = round2(grossSubtotal - discountAmount);
+  
   const vat = round2(subtotal * (vatRate / 100));
   const irpf = round2(subtotal * (irpfRate / 100));
   const total = round2(subtotal + vat - irpf);
-  return { subtotal, vat, irpf, total };
+  return { grossSubtotal, discountAmount, subtotal, vat, irpf, total };
 };
 
 const sanitizeItems = (items = []) => {
@@ -125,14 +127,88 @@ app.get('/api/invoices', tryHandler((req, res) => {
   res.json(enrichedInvoices);
 }));
 
+app.get('/api/invoices/:id', tryHandler((req, res) => {
+  const invoice = db.prepare(`
+    SELECT i.*, c.name as client_name 
+    FROM invoices i 
+    JOIN clients c ON i.client_id = c.id 
+    WHERE i.id = ?
+  `).get(req.params.id);
+
+  if (!invoice) return res.status(404).json({ error: 'Factura no encontrada.' });
+
+  invoice.items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoice.id);
+  res.json(invoice);
+}));
+
+app.put('/api/invoices/:id', tryHandler((req, res) => {
+  const id = req.params.id;
+  const number = String(req.body.number || '').trim();
+  const client_name = String(req.body.client_name || '').trim();
+  const date = String(req.body.date || '').trim();
+  const due_date = String(req.body.due_date || '').trim();
+  const discount_rate = asNumber(req.body.discount_rate, 0);
+  const vat_rate = asNumber(req.body.vat_rate, 21);
+  const irpf_rate = asNumber(req.body.irpf_rate, 15);
+  const status = String(req.body.status || 'PENDING').toUpperCase();
+  const notes = String(req.body.notes || '').trim();
+
+  if (!number || !client_name || !date) {
+    return res.status(400).json({ error: 'Numero, cliente y fecha son obligatorios.' });
+  }
+
+  const cleanItems = sanitizeItems(req.body.items);
+  const totals = calculateInvoiceTotals(cleanItems, vat_rate, irpf_rate, discount_rate);
+
+  const updateInvoice = db.transaction(() => {
+    let client = db.prepare('SELECT id FROM clients WHERE name = ?').get(client_name);
+    let clientId = client?.id;
+    if (!clientId) {
+      const clientResult = db.prepare('INSERT INTO clients (name) VALUES (?)').run(client_name);
+      clientId = clientResult.lastInsertRowid;
+    }
+
+    db.prepare(`
+      UPDATE invoices SET
+        number = ?, client_id = ?, date = ?, due_date = ?, 
+        discount_rate = ?, discount_amount = ?, subtotal = ?, 
+        vat_rate = ?, vat_amount = ?, irpf_rate = ?, irpf_amount = ?, 
+        total = ?, status = ?, notes = ?
+      WHERE id = ?
+    `).run(
+      number, clientId, date, due_date || null,
+      discount_rate, totals.discountAmount, totals.subtotal,
+      vat_rate, totals.vat, irpf_rate, totals.irpf,
+      totals.total, status, notes || null, id
+    );
+
+    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(id);
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    cleanItems.forEach((item) => {
+      insertItem.run(id, item.description, item.quantity, item.unit_price, item.total);
+    });
+
+    return id;
+  });
+
+  updateInvoice();
+  res.json({ success: true, id });
+}));
+
 app.post('/api/invoices', tryHandler((req, res) => {
   const number = String(req.body.number || '').trim();
   const client_name = String(req.body.client_name || '').trim();
   const date = String(req.body.date || '').trim();
   const due_date = String(req.body.due_date || '').trim();
+  const discount_rate = asNumber(req.body.discount_rate, 0);
   const vat_rate = asNumber(req.body.vat_rate, 21);
   const irpf_rate = asNumber(req.body.irpf_rate, 15);
   const status = String(req.body.status || 'PENDING').toUpperCase();
+  const notes = String(req.body.notes || '').trim();
 
   if (!number || !client_name || !date) {
     return res.status(400).json({ error: 'Numero, cliente y fecha son obligatorios.' });
@@ -140,18 +216,18 @@ app.post('/api/invoices', tryHandler((req, res) => {
   if (!ALLOWED_STATUSES.has(status)) {
     return res.status(400).json({ error: 'Estado no valido.' });
   }
-  if (vat_rate < 0 || irpf_rate < 0) {
-    return res.status(400).json({ error: 'IVA e IRPF no pueden ser negativos.' });
+  if (vat_rate < 0 || irpf_rate < 0 || discount_rate < 0) {
+    return res.status(400).json({ error: 'IVA, IRPF y Descuento no pueden ser negativos.' });
   }
 
   const cleanItems = sanitizeItems(req.body.items);
-  const totals = calculateInvoiceTotals(cleanItems, vat_rate, irpf_rate);
+  const totals = calculateInvoiceTotals(cleanItems, vat_rate, irpf_rate, discount_rate);
 
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (
-      number, client_id, date, due_date, subtotal, vat_rate, vat_amount, irpf_rate, irpf_amount, total, status
+      number, client_id, date, due_date, discount_rate, discount_amount, subtotal, vat_rate, vat_amount, irpf_rate, irpf_amount, total, status, notes
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertItem = db.prepare(`
     INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total)
@@ -171,13 +247,16 @@ app.post('/api/invoices', tryHandler((req, res) => {
       clientId,
       date,
       due_date || null,
+      discount_rate,
+      totals.discountAmount,
       totals.subtotal,
       vat_rate,
       totals.vat,
       irpf_rate,
       totals.irpf,
       totals.total,
-      status
+      status,
+      notes || null
     );
     const invoiceId = invoiceResult.lastInsertRowid;
 
@@ -204,6 +283,24 @@ app.delete('/api/invoices/:id', tryHandler((req, smugglers) => {
   smugglers.json({ success: true });
 }));
 
+app.patch('/api/invoices/:id/status', tryHandler((req, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  const status = String(req.body.status || '').toUpperCase();
+  
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de factura invalido.' });
+  }
+  if (!ALLOWED_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'Estado no valido.' });
+  }
+
+  const result = db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run(status, id);
+  if (!result.changes) {
+    return res.status(404).json({ error: 'Factura no encontrada.' });
+  }
+  res.json({ success: true, status });
+}));
+
 app.get('/api/invoices/:id/pdf', tryHandler(async (req, res) => {
   const invoice = db.prepare(`
     SELECT i.*, c.name as client_name, c.tax_id as client_tax_id, c.address as client_address
@@ -225,7 +322,8 @@ app.get('/api/invoices/:id/pdf', tryHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="Factura-${safeNumber}-${exportStamp}.pdf"`);
 
   try {
-    await generateInvoicePdf(invoice, res);
+    const settings = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    await generateInvoicePdf(invoice, settings, res);
   } catch (error) {
     if (!res.headersSent) {
       return res.status(500).json({ error: 'No se pudo generar el PDF.' });
@@ -244,13 +342,139 @@ app.get('/api/stats', tryHandler((req, res) => {
     FROM invoices
   `).get();
   const clientCount = db.prepare('SELECT COUNT(*) as count FROM clients').get().count;
+  const totalExpenses = db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM cash_flow WHERE type = \'EXPENSE\'').get().total;
+  
   res.json({
     totalBilled: round2(totals.totalBilled),
     totalPending: round2(totals.totalPending),
     clientCount,
-    invoiceCount: totals.invoiceCount
+    invoiceCount: totals.invoiceCount,
+    totalExpenses: round2(totalExpenses)
   });
 }));
+
+app.get('/api/stats/chart', tryHandler((req, res) => {
+  // Group invoices by month (YYYY-MM) and sum total where status is not CANCELLED
+  const rawData = db.prepare(`
+    SELECT 
+      strftime('%Y-%m', date) as month,
+      SUM(total) as revenue
+    FROM invoices
+    WHERE status != 'CANCELLED'
+    GROUP BY month
+    ORDER BY month ASC
+    LIMIT 12
+  `).all();
+
+  // Create an array of the last 6 months
+  const months = [];
+  const revenues = [];
+  
+  // Quick manual logic for last 6 months to ensure zero-filled months
+  const today = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const mStr = d.toISOString().slice(0, 7); // YYYY-MM
+    months.push(mStr);
+    
+    const found = rawData.find(r => r.month === mStr);
+    revenues.push(found ? round2(found.revenue) : 0);
+  }
+
+  res.json({ labels: months, data: revenues });
+}));
+
+// --- CASH FLOW API ---
+app.get('/api/cash-flow', tryHandler((req, res) => {
+  const rows = db.prepare('SELECT * FROM cash_flow ORDER BY date DESC, id DESC').all();
+  res.json(rows);
+}));
+
+app.post('/api/cash-flow', tryHandler((req, res) => {
+  const { type, description, amount, date } = req.body;
+  if (!type || !description || !amount) {
+    return res.status(400).json({ error: 'Faltan campos obligatorios para el movimiento de caja.' });
+  }
+  const info = db.prepare('INSERT INTO cash_flow (type, description, amount, date) VALUES (?, ?, ?, ?)').run(
+    type, description, amount, date || new Date().toISOString().split('T')[0]
+  );
+  res.json({ id: info.lastInsertRowid });
+}));
+
+app.delete('/api/cash-flow/:id', tryHandler((req, res) => {
+  db.prepare('DELETE FROM cash_flow WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+}));
+
+// --- SETTINGS API ---
+app.get('/api/settings', tryHandler((req, res) => {
+  const settings = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+  res.json(settings);
+}));
+
+app.patch('/api/settings', tryHandler((req, res) => {
+  const { 
+    company_name, tax_id, address, default_vat_rate, default_irpf_rate,
+    phone, email, website, bank_name, iban, invoice_prefix, invoice_footer,
+    legal_info, vat_expenses
+  } = req.body;
+  
+  db.prepare(`
+    UPDATE settings SET 
+      company_name = ?,
+      tax_id = ?,
+      address = ?,
+      default_vat_rate = ?,
+      default_irpf_rate = ?,
+      phone = ?,
+      email = ?,
+      website = ?,
+      bank_name = ?,
+      iban = ?,
+      invoice_prefix = ?,
+      invoice_footer = ?,
+      legal_info = ?,
+      vat_expenses = ?
+    WHERE id = 1
+  `).run(
+    company_name, 
+    tax_id, 
+    address, 
+    asNumber(default_vat_rate, 21.0), 
+    asNumber(default_irpf_rate, 15.0),
+    phone || '',
+    email || '',
+    website || '',
+    bank_name || '',
+    iban || '',
+    invoice_prefix || 'FAC-',
+    invoice_footer || 'Gracias por confiar en nuestros servicios.',
+    legal_info || '',
+    asNumber(vat_expenses, 0)
+  );
+
+  res.json({ success: true });
+}));
+
+app.get('/api/export/csv', tryHandler((req, res) => {
+  const invoices = db.prepare(`
+    SELECT i.*, c.name as client_name 
+    FROM invoices i 
+    JOIN clients c ON i.client_id = c.id 
+    ORDER BY i.date DESC
+  `).all();
+
+  let csv = '\uFEFF'; // BOM for Excel
+  csv += 'Fecha,Numero,Cliente,Subtotal,IVA,IRPF,Total,Estado\n';
+  invoices.forEach(inv => {
+    csv += `${inv.date},${inv.number},"${inv.client_name.replace(/"/g, '""')}",${inv.subtotal},${inv.vat_amount},${inv.irpf_amount},${inv.total},${inv.status}\n`;
+  });
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="Facturas_Export.csv"');
+  res.send(csv);
+}));
+
 
 app.use((err, req, res, next) => {
   console.error(err);
@@ -271,8 +495,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Error interno del servidor.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`FacturaYa running at http://localhost:${PORT}`);
-  // Open browser automatically
-  // open(`http://localhost:${PORT}`); 
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Max Limpio Server running at http://localhost:${PORT}`);
+    const url = `http://localhost:${PORT}`;
+    const { exec } = require('child_process');
+    // Abre el navegador predeterminado del sistema de forma segura
+    exec(`start "" "${url}"`);
+  });
+}
+
+module.exports = app;

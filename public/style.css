@@ -11,13 +11,13 @@
     --ink-dim: #c4cfde;
     --ink-soft: #8f9db1;
 
-    --acid: #bfff3a;
-    --acid-soft: rgba(191, 255, 58, 0.14);
-    --acid-glow: rgba(191, 255, 58, 0.28);
-    --cyan: #62e6ff;
+    --acid: #00d2ff; /* Azul Agua Cristalina */
+    --acid-soft: rgba(0, 210, 255, 0.1);
+    --acid-glow: rgba(0, 210, 255, 0.3);
+    --cyan: #0088ff;
     --warn: #ffcd57;
-    --ok: #37d09a;
-    --hot: #ff5d7a;
+    --ok: #00d2ff;
+    --hot: #ff6b6b; /* Rojo Coral suave, menos agresivo */
 
     --line: #2d323d;
     --line-soft: #252a34;
@@ -36,7 +36,8 @@
     --shadow-md: 0 22px 52px rgba(0, 0, 0, 0.35);
     --shadow-sm: 0 12px 28px rgba(0, 0, 0, 0.24);
 
-    --ts: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    --ts: 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+    --glare: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, transparent 60%);
 }
 
 * {
@@ -60,8 +61,8 @@ body {
 }
 
 ::selection {
-    background: rgba(191, 255, 58, 0.35);
-    color: #0b1200;
+    background: rgba(0, 136, 255, 0.35);
+    color: #ffffff;
 }
 
 .bg-fabric,
@@ -142,7 +143,7 @@ body {
     border-radius: 12px;
     display: grid;
     place-items: center;
-    background: linear-gradient(135deg, #d8ff84, var(--acid));
+    background: linear-gradient(135deg, #62e6ff, var(--acid));
     box-shadow: 0 14px 30px var(--acid-glow);
 }
 
@@ -156,7 +157,8 @@ body {
     font-family: var(--serif);
     font-style: italic;
     font-weight: 400;
-    color: var(--acid);
+    color: #ff6b6b; /* Rojo Coral para armonizar con el azul agua */
+    text-shadow: 0 0 15px rgba(255, 107, 107, 0.25);
 }
 
 nav {
@@ -190,7 +192,7 @@ nav {
 .nav-item.active {
     color: var(--acid);
     background: linear-gradient(90deg, var(--acid-soft), transparent);
-    border-color: rgba(191, 255, 58, 0.25);
+    border-color: rgba(0, 136, 255, 0.25);
 }
 
 .nav-item.active::before {
@@ -202,7 +204,7 @@ nav {
     height: 68%;
     border-radius: 8px;
     background: var(--acid);
-    box-shadow: 0 0 14px rgba(191, 255, 58, 0.6);
+    box-shadow: 0 0 14px rgba(0, 136, 255, 0.6);
 }
 
 .sidebar-footer {
@@ -225,7 +227,7 @@ nav {
 }
 
 .content::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(191, 255, 58, 0.55), rgba(98, 230, 255, 0.4));
+    background: linear-gradient(180deg, rgba(0, 136, 255, 0.55), rgba(98, 230, 255, 0.4));
     border-radius: 999px;
 }
 
@@ -287,6 +289,7 @@ nav {
     padding: 1.3rem 1.2rem;
     box-shadow: var(--shadow-sm);
     transition: transform var(--ts), border-color var(--ts), box-shadow var(--ts);
+    will-change: transform, box-shadow;
 }
 
 .stat-card::after {
@@ -294,9 +297,48 @@ nav {
 }
 
 .stat-card:hover {
-    transform: translateY(-3px);
-    border-color: #5a739d;
-    box-shadow: var(--shadow-md);
+    transform: translateY(-5px) scale(1.01);
+    border-color: var(--acid);
+    box-shadow: 0 20px 40px rgba(0, 210, 255, 0.15);
+}
+
+.stat-card .glare {
+    position: absolute;
+    inset: 0;
+    background: var(--glare);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--ts);
+}
+
+.stat-card:hover .glare {
+    opacity: 1;
+}
+
+.profit-meter {
+    margin-top: 2rem;
+    padding: 2rem;
+    background: radial-gradient(circle at center, rgba(163, 230, 53, 0.08), transparent);
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(163, 230, 53, 0.2);
+    text-align: center;
+}
+
+.profit-meter h4 {
+    font-family: var(--mono);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    color: var(--ok);
+    margin-bottom: 0.5rem;
+}
+
+.profit-meter .amount {
+    font-size: 3.5rem;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+    color: #fff;
+    text-shadow: 0 0 30px rgba(163, 230, 53, 0.3);
 }
 
 .stat-card h3 {
@@ -310,11 +352,11 @@ nav {
 }
 
 .stat-card .value {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: clamp(1.22rem, 2.3vw, 1.8rem);
-    font-weight: 800;
+    font-weight: 900;
     line-height: 1.12;
-    letter-spacing: -0.04em;
+    letter-spacing: -0.05em;
 }
 
 .stat-card.accent { border-color: rgba(191, 255, 58, 0.52); }
@@ -372,21 +414,39 @@ tbody tr:hover td {
     color: var(--ink);
 }
 
-.status-badge {
+.status-badge, .status-select {
     display: inline-flex;
     align-items: center;
     border-radius: 999px;
     padding: 0.27rem 0.62rem;
     font-size: 0.68rem;
+    font-family: var(--mono);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     border: 1px solid transparent;
 }
 
-.status-badge.pending { color: var(--warn); border-color: rgba(255, 205, 87, 0.5); background: rgba(255, 205, 87, 0.14); }
-.status-badge.paid { color: var(--ok); border-color: rgba(55, 208, 154, 0.5); background: rgba(55, 208, 154, 0.14); }
-.status-badge.cancelled { color: var(--hot); border-color: rgba(255, 93, 122, 0.55); background: rgba(255, 93, 122, 0.14); }
+.status-select {
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+    cursor: pointer;
+    text-align: center;
+    padding-right: 1.2rem;
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.4rem top 50%;
+    background-size: 0.45rem auto;
+}
+.status-select option {
+    background: var(--bg-2);
+    color: var(--ink);
+}
+
+.status-badge.pending, .status-select.pending { color: var(--warn); border-color: rgba(255, 205, 87, 0.5); background-color: rgba(255, 205, 87, 0.14); }
+.status-badge.paid, .status-select.paid { color: var(--ok); border-color: rgba(55, 208, 154, 0.5); background-color: rgba(55, 208, 154, 0.14); }
+.status-badge.cancelled, .status-select.cancelled { color: var(--hot); border-color: rgba(255, 93, 122, 0.55); background-color: rgba(255, 93, 122, 0.14); }
 
 .editor-layout {
     display: grid;
@@ -592,6 +652,38 @@ tbody tr:hover td {
     transform: scale(1.03);
 }
 
+/* Tax Center Styles */
+.tax-report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.tax-card {
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+}
+
+.tax-card h4 {
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    margin-bottom: 1rem;
+}
+
+.tax-val {
+    font-size: 1.8rem;
+    font-weight: 900;
+    font-family: var(--sans);
+    letter-spacing: -0.05em;
+}
+
+.liquid-transition {
+    display: none;
+}
+
 .font-mono { font-family: var(--mono); }
 .font-bold { font-weight: 700; }
 
@@ -664,7 +756,8 @@ tbody tr:hover td {
     }
 
     nav {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 0.5rem;
     }
 
     .content {

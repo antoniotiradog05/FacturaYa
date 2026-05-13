@@ -1,7 +1,17 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const db = new Database(path.join(__dirname, 'database.sqlite'));
+let dbPath = path.join(__dirname, 'database.sqlite');
+
+// Si la app está empaquetada con Electron, el DB debe estar al lado del ejecutable para ser portable.
+if (process.versions && process.versions.electron) {
+  if (process.mainModule && process.mainModule.filename.includes('app.asar')) {
+    dbPath = path.join(path.dirname(process.execPath), 'database.sqlite');
+  }
+}
+
+const db = new Database(dbPath);
 
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
@@ -43,6 +53,25 @@ db.exec(`
     total REAL DEFAULT 0,
     FOREIGN KEY (invoice_id) REFERENCES invoices (id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1), -- Ensure only one row
+    company_name TEXT DEFAULT 'Max Limpio',
+    tax_id TEXT DEFAULT 'NIF/CIF',
+    address TEXT DEFAULT 'Dirección',
+    default_vat_rate REAL DEFAULT 21.0,
+    default_irpf_rate REAL DEFAULT 15.0
+  );
+  
+  INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+  CREATE TABLE IF NOT EXISTS cash_flow (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL, -- 'INCOME' or 'EXPENSE'
+    description TEXT NOT NULL,
+    amount REAL NOT NULL,
+    date TEXT DEFAULT (date('now'))
+  );
 `);
 
 function ensureColumn(table, column, definition) {
@@ -54,10 +83,24 @@ function ensureColumn(table, column, definition) {
 }
 
 ensureColumn('invoices', 'subtotal', 'REAL DEFAULT 0');
+ensureColumn('invoices', 'discount_rate', 'REAL DEFAULT 0');
+ensureColumn('invoices', 'discount_amount', 'REAL DEFAULT 0');
 ensureColumn('invoices', 'vat_amount', 'REAL DEFAULT 0');
 ensureColumn('invoices', 'irpf_amount', 'REAL DEFAULT 0');
 ensureColumn('invoices', 'total', 'REAL DEFAULT 0');
+ensureColumn('invoices', 'notes', 'TEXT DEFAULT \'\'');
 ensureColumn('invoice_items', 'total', 'REAL DEFAULT 0');
+
+ensureColumn('settings', 'phone', 'TEXT DEFAULT \'\'');
+ensureColumn('settings', 'legal_info', 'TEXT DEFAULT \'\'');
+ensureColumn('settings', 'vat_expenses', 'REAL DEFAULT 0');
+ensureColumn('settings', 'website', 'TEXT DEFAULT \'\'');
+ensureColumn('settings', 'bank_name', 'TEXT DEFAULT \'\'');
+ensureColumn('settings', 'iban', 'TEXT DEFAULT \'\'');
+ensureColumn('settings', 'invoice_prefix', 'TEXT DEFAULT \'MAX-\'');
+ensureColumn('settings', 'invoice_footer', 'TEXT DEFAULT \'Potencia y brillo para todas tus superficies - Calidad que se nota.\'');
+ensureColumn('settings', 'logo_url', 'TEXT DEFAULT \'\'');
+ensureColumn('cash_flow', 'category', 'TEXT DEFAULT \'General\'');
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
